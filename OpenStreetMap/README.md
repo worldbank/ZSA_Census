@@ -1,4 +1,4 @@
-# Introduction to OSM
+# Introduction to [OSM](https://www.openstreetmap.org/#map=6/-13.225/27.854)
 [Lesson Worksheet](https://teachosm-geosurge-content-deploy.s3.amazonaws.com/teachosm-for-high-school-4.pdf)
 ## About OSM 
 [About OSM](https://wiki.openstreetmap.org/wiki/About_OpenStreetMap)
