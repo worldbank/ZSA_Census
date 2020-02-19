@@ -3,7 +3,7 @@ This module calls functions from utils to run data processing functions
 """
 from pathlib import Path
 import os
-import utils as ut
+from ListingDataProcessor import utils as ut
 
 
 class DataProcessor:

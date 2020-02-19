@@ -5,6 +5,7 @@ import os
 import pandas as pd
 import geopandas as gpd
 import numpy as np
+from datetime import datetime
 
 
 def create_df(file):
@@ -22,6 +23,540 @@ def create_df(file):
             return df
         except Exception as e:
             continue
+
+
+def join_two_tab_files(left_df, right_df, merge_cols):
+    """
+    Helper function for joining two files
+    """
+
+    # first add merge_id column
+    if len(merge_cols) > 1:
+        col1, col2 = merge_cols[0], merge_cols[1]
+        left_df["merge_id"] = left_df.apply(lambda x: str(x[col1]) + str(x[col2]), axis=1)
+        right_df["merge_id"] = right_df.apply(lambda x: str(x[col1]) + str(x[col2]), axis=1)
+
+    # merge and rename some columns to prepare for further merging
+    df = left_df.merge(right=right_df, on='merge_id', how="left", indicator=True)
+    df.rename(columns={'interview__key_x': 'interview__key', "_merge": "_merge_1"}, inplace=True)
+
+    return df
+
+
+def summarize_by_interview_key(df, agg_func_first=None, agg_func_mean=None, agg_func_sum=None, agg_func=None,
+                               agg_col='interview__key'):
+    """
+
+    """
+    if agg_func:
+        dfg = df.groupby([agg_col]).agg(agg_func).reset_index()
+        return dfg
+    # =====================================================================
+    # PREPARE AGG FUNCTIONS
+    # =====================================================================
+    # create a dict object
+    agg_func = {i: "first" for i in agg_func_first}
+    agg_func_mean_dict = {i: "mean" for i in agg_func_mean}
+    agg_func_sum_dict = {i: "sum" for i in agg_func_sum}
+
+    agg_func.update(agg_func_mean_dict)
+    agg_func.update(agg_func_sum_dict)
+
+    # =====================================================================
+    # GROUP AND SUMMARISE
+    # =====================================================================
+    dfg = df.groupby([agg_col]).agg(agg_func).reset_index()
+
+    return dfg
+
+
+def convert_geolocation_to_numeric(row, col_name, geo_col):
+    try:
+        if col_name == 'Longitude':
+            val = float(row[geo_col].split(",")[0])
+            return val
+        elif col_name == 'Latitude':
+            val = float(row[geo_col].split(",")[1])
+            return val
+    except Exception as e:
+        return np.nan
+
+
+def prepare_tab_files_for_joining(dir_with_tab_files, tab_file_names):
+    """
+    Takes all the tab files from survey solutions and preps them for merging
+    and processing
+    """
+    # ======================================================
+    # GRAB ALL THE REQUIRED TAB FILES and CREATE DATAFRAMES
+    # ======================================================
+    final, hh_roster, add_hh_roster, hh_units, add_struct = None, None, None, None, None
+    final_tab, hroster, addroster, hhunits, addstruct = tab_file_names['final'], tab_file_names['hh_roster'], \
+                                                        tab_file_names['add_roster'], tab_file_names['hh_units'], \
+                                                        tab_file_names['add_struct']
+    for f in dir_with_tab_files.iterdir():
+        file_name = f.parts[-1]
+        if file_name == final_tab:
+            final = pd.read_csv(f, sep="\t")
+            # final = final[final.PROV == 2]
+        elif file_name == hroster:
+            hh_roster = pd.read_csv(f, sep="\t")
+        elif file_name == addroster:
+            add_hh_roster = pd.read_csv(f, sep="\t")
+        elif file_name == hhunits:
+            hh_units = pd.read_csv(f, sep="\t")
+        elif file_name == addstruct:
+            add_struct = pd.read_csv(f, sep="\t")
+    print("Size, final: {}, Size, hhroster: {},Size, hhunits: {}, ".format(final.shape[0],
+                                                                           hh_roster.shape[0],
+                                                                           hh_units.shape[0]))
+    # ======================================================
+    # CHANGE COLUMN NAMES, DROP COLUMNS AND ADD NEW COLUMNS
+    # ======================================================
+    # final
+    final['Structure_Category'] = 'REG'  # indicates whether this is addional structure or not
+    final['GeoLocation_Latitude'] = final.apply(convert_geolocation_to_numeric, args=("Latitude", 'GEOLOCATION'),
+                                                axis=1)
+    final['GeoLocation_Longitude'] = final.apply(convert_geolocation_to_numeric, args=("Longitude", 'GEOLOCATION'),
+                                                 axis=1)
+    drop_cols_final = ['rand_sys', 'Comment', 'Comments', 'sssys_irnd', 'has__errors', 'assignment__id']
+    change_col_names_final = {"IMales": 'Males_in_structure', "IFemales": 'Females_in_structure',
+                              'NOHU': 'Number_of_Housing_Units',
+                              'MULTI__1': 'Multipurpose_Residential_Building',
+                              'MULTI__2': 'Multipurpose_Religious_Building',
+                              'MULTI__3': 'Multipurpose_Institutional_Building',
+                              'MULTI__4': 'Multipurpose_Commercial_Building',
+                              "CATEGORY": "Structure_Type_Categorisation",
+                              'SCATEGORY': 'Specify_Other_Type_Categorisation',
+                              "RESIDENTIAL": 'Residential_Building',
+                              "SRESIDENTIAL": 'Specify_Other_Residential',
+                              "RELIGIOUS": 'Religious_Building',
+                              "SRELIGIOUS": 'Specify_Other_Religious_Structures',
+                              "INSTITUTIONAL": 'Institutional_Building',
+                              "SINSTITUTIONAL": 'Specify_Other_Institutional_Building',
+                              "EDUCATIONAL": 'Educational_Building',
+                              "COMMERCIAL": 'Commercial_Building',
+                              "SCOMMERCIAL": 'Specify_Other_Commercial_Buildings',
+                              "HEALTH": 'Health_Facility_Hospital_Health_Center',
+                              "OWNERSHIP": 'Ownership_of_Institution',
+                              "STATUS": 'Status_of_the_Institution',
+                              "IName": 'Structure_Name',
+                              "OCCUPANCY": 'Structure_Institution_Occupied'
+                              }
+    final.drop(labels=drop_cols_final, axis=1, inplace=True)
+    final.rename(columns=change_col_names_final, inplace=True)
+    final["date"] = final.apply(lambda x: x['GPSLocation__Timestamp'].split("T")[0], axis=1)
+
+    # housing units
+    hh_units.rename(columns={"NOHH": 'Total_Households', 'HUOS': 'Housing_Unit_Occupied'}, inplace=True)
+
+    # hh
+    hh_roster['Household_Category'] = "REG"
+    hh_roster.drop(labels=['HPhone', 'Own', 'NUMBEROFFARMS', 'NoFarmsA5ha'], axis=1, inplace=True)
+    hh_roster.rename(columns={"HMales": 'Males_in_Household', "HFemales": 'Females_in_Household',
+                              "HName": 'First_Head_Name'}, inplace=True)
+
+    # additional household
+    add_hh_roster['Household_Category'] = "ADD"
+    add_hh_roster.rename(columns={"addHMales": 'Males_in_Household', "addHFemales": 'Females_in_Household',
+                                  'addHName': "Add_Head_Name"},
+                         inplace=True)
+
+    # additional structure
+    add_struct['Structure_Category'] = 'ADD'
+    add_struct.rename(columns={'ADDITION_HH': "Total_Households", 'AddtionOccupany': 'Add_Structure_Occupied'},
+                      inplace=True)
+    add_struct['GeoLocation_Latitude'] = add_struct.apply(convert_geolocation_to_numeric,
+                                                          args=("Latitude", 'ADDTIONGEOLOCATION'), axis=1)
+    add_struct['GeoLocation_Longitude'] = add_struct.apply(convert_geolocation_to_numeric,
+                                                           args=("Longitude", 'ADDTIONGEOLOCATION'), axis=1)
+
+    # ======================================================
+    # SUMMARIZE AT INTERVIEW_KEY LEVEL
+    # ======================================================
+    agg_func_hhunits = {'Total_Households': 'sum', 'Housing_Unit_Occupied': "first"}
+    agg_func_roster = {'Males_in_Household': 'sum', 'Females_in_Household': 'sum',
+                       "interview__id": "first", 'First_Head_Name': 'first', 'Household_Category': 'first'}
+    agg_func_add_hh_roster = {'Add_Head_Name': 'first', 'Males_in_Household': 'sum',
+                              'Females_in_Household': 'sum', 'Household_Category': 'first'}
+    agg_func_add_struct = {'Total_Households': 'sum', 'Add_Structure_Occupied': 'first', 'interview__id': 'first',
+                           'GeoLocation_Latitude': 'mean', 'GeoLocation_Longitude': 'mean',
+                           'Structure_Category': 'first'}
+
+    hh_units_ik = summarize_by_interview_key(df=hh_units, agg_func=agg_func_hhunits)
+    hh_roster_ik = summarize_by_interview_key(df=hh_roster, agg_func=agg_func_roster)
+    add_hh_roster_ik = summarize_by_interview_key(df=add_hh_roster, agg_func=agg_func_add_hh_roster)
+    add_struct_ik = summarize_by_interview_key(df=add_struct, agg_func=agg_func_add_struct)
+
+    return final, hh_roster_ik, hh_units_ik, add_hh_roster_ik, add_struct_ik
+
+
+def process_tab_files_hh_roster_hh_units_final(dir_with_tab_files, tab_file_names):
+    """
+    Combines the following three tab files:
+    - Final.tab
+    - HHROSTER.tab
+    - HOUSINGUNITS.tab
+    to create a final output which is summarized at Interview__key level.
+    :param dir_with_tab_files: Dir where the tab delimited Survey Solutions files are
+    :return: a dataframe which will later be appended to another dataframe coming from add_roster and add_struct
+    """
+
+    # ======================================================
+    # PREP THE DATA TAB FILES FOR MERGING
+    # ======================================================
+    final, hh_roster, hh_units, add_hh_roster, add_struct = prepare_tab_files_for_joining(dir_with_tab_files,
+                                                                                          tab_file_names=tab_file_names)
+
+    # ======================================================
+    # MERGE HHROSTER WITH HHUNITS
+    # ======================================================
+    hhroster_hhunits = join_two_tab_files(left_df=hh_roster, right_df=hh_units,
+                                          merge_cols=['interview__key', "HOUSINGUNITS__id"])
+
+    # ======================================================
+    # MERGE PREVIOUS RESULT (hhroster_hhunits) TO FINAL.TAB
+    # ======================================================
+    hhroster_hhunits_final = hhroster_hhunits.merge(right=final, on='interview__key', how="left", indicator=True)
+
+    # rename and drop some columns
+    hhroster_hhunits_final.drop(labels=['interview__id_x', 'interview__id_y', "HOUSINGUNITS__id_x",
+                                        'HOUSINGUNITS__id_x', 'merge_id', '_merge_1', "_merge", 'interview__key_y'],
+                                axis=1, inplace=True)
+
+    hhroster_hhunits_final.rename(columns={'HOUSINGUNITS__id_y': "HOUSINGUNITS__id"}, inplace=True)
+
+    print("hhroster_hhunits_final: {}".format(hhroster_hhunits_final.shape[0]))
+    # ======================================================
+    # SUMMARIZE BY INTERVIEW KEY
+    # ======================================================
+    agg_func_first = ['interview__id', 'PROV', 'DIST', 'CONS', 'WARD',
+                      'REGION', 'SEA', 'LOCALITY', 'Religious_Building', 'Specify_Other_Religious_Structures',
+                      'Institutional_Building', 'Specify_Other_Institutional_Building',
+                      'Educational_Building', 'Commercial_Building', 'Specify_Other_Commercial_Buildings',
+                      'Health_Facility_Hospital_Health_Center', 'Ownership_of_Institution',
+                      'Status_of_the_Institution', 'CBN', 'GPSLocation__Timestamp', "Structure_Type_Categorisation",
+                      'Specify_Other_Type_Categorisation', 'Educational_Building', 'Commercial_Building',
+                      'Specify_Other_Commercial_Buildings', 'Health_Facility_Hospital_Health_Center',
+                      'Ownership_of_Institution', 'addtionalstructure', 'First_Head_Name',
+                      'Multipurpose_Commercial_Building',
+                      'Multipurpose_Institutional_Building', "date",
+                      'Multipurpose_Religious_Building',
+                      'Multipurpose_Residential_Building', 'GEOLOCATION',
+                      'Residential_Building',
+                      'Specify_Other_Commercial_Buildings',
+                      'Specify_Other_Religious_Structures',
+                      'Specify_Other_Residential',
+                      'Specify_Other_Type_Categorisation',
+                      'Structure_Institution_Occupied',
+                      'Structure_Name',
+                      'Structure_Type_Categorisation', 'interview__status'
+                      ]
+
+    agg_func_mean = ['GPSLocation__Latitude', 'GPSLocation__Longitude', 'GeoLocation_Latitude',
+                     'GPSLocation__Accuracy', 'GPSLocation__Altitude', 'GeoLocation_Longitude']
+
+    agg_func_sum = ['Males_in_Household', 'Females_in_Household', 'Males_in_structure',
+                    'Females_in_structure', 'Number_of_Housing_Units', 'Total_Households']
+    # summarize by interview key
+    hhroster_hhunits_final_ik = summarize_by_interview_key(df=hhroster_hhunits_final, agg_func_first=agg_func_first,
+                                                           agg_func_mean=agg_func_mean, agg_func_sum=agg_func_sum,
+                                                           agg_col='interview__key')
+    # rename above dataframe for convinience, ik stands for Interview__Key
+    hhr_hhu_final_ik = hhroster_hhunits_final_ik
+
+    # add Hoousehold_Population Column
+    hhr_hhu_final_ik['Household_Population'] = hhr_hhu_final_ik['Males_in_Household'] + \
+                                               hhr_hhu_final_ik['Females_in_Household']
+    hhr_hhu_final_ik['Institutional_Structure_Population'] = hhr_hhu_final_ik['Males_in_structure'] + \
+                                                             hhr_hhu_final_ik['Females_in_structure']
+
+    return hhr_hhu_final_ik
+
+
+def process_tab_files(dir_with_tab_files, tab_file_names, output_csv_dir,
+                                                from_which_download):
+    """
+    Combines the following three tab files:
+    - Final.tab
+    - HHROSTER.tab
+    - HOUSINGUNITS.tab
+    to create a final output which is summarized at Interview__key level.
+    :param dir_with_tab_files: Dir where the tab delimited Survey Solutions files are
+    :return: a dataframe which will later be appended to another dataframe coming from add_roster and add_struct
+    """
+
+    # ======================================================
+    # PREP THE DATA TAB FILES FOR MERGING
+    # ======================================================
+    final, hh_roster, hh_units, add_hh_roster, add_struct = prepare_tab_files_for_joining(dir_with_tab_files,
+                                                                                          tab_file_names=tab_file_names)
+    # ======================================================
+    #  ADD HOUSEHOLD POPULATION VARIABLES AT IK LEVEL
+    # ======================================================
+    hh_roster['Household_Population'] = hh_roster['Males_in_Household'] + \
+                                        hh_roster['Females_in_Household']
+    final['Institutional_Structure_Population'] = final['Males_in_structure'] + \
+                                                  final['Females_in_structure']
+    add_hh_roster['Household_Population'] = add_hh_roster['Males_in_Household'] + \
+                                            add_hh_roster['Females_in_Household']
+
+    # ======================================================
+    # MERGE HHROSTER, HHUNITS WITH FINAL
+    # ======================================================
+    final_hh_roster = final.merge(right=hh_roster, on='interview__key', how="left", indicator=True)
+
+    # ensure all records from hh_roster merged into final
+    hh_roster_size = hh_roster.shape[0]
+    hh_roster_matched_size = final_hh_roster[final_hh_roster._merge == 'both'].shape[0]
+    assert hh_roster_size == hh_roster_matched_size
+    final_hh_roster.drop(labels=['_merge'], axis=1, inplace=True)
+
+    # now merge hh_units to above output
+    final_hh_roster_hh_units = final_hh_roster.merge(right=hh_units, on='interview__key', how="left", indicator=True)
+
+    # ensure all records from hh_units merged into final
+    hh_units_size = hh_units.shape[0]
+    hh_units_matched_size = final_hh_roster_hh_units[final_hh_roster_hh_units._merge == 'both'].shape[0]
+    assert hh_units_size == hh_units_matched_size
+    # clean up
+    final_hh_roster_hh_units.drop(labels=['_merge', 'interview__id_y'], axis=1, inplace=True)
+    final_hh_roster_hh_units.rename(columns={'interview__id_x': 'interview__id'}, inplace=True)
+
+    # ========================================================================
+    # MERGE ADDITIONAL STRUCTURES WITH ADD_HHROSTER SO THAT WE HAVE LOCATION
+    # ========================================================================
+    add_struct_add_roster = add_struct.merge(right=add_hh_roster, on='interview__key', how='left', indicator=True)
+
+    add_hh_roster_size = add_hh_roster.shape[0]
+    add_hh_roster_matched_size = add_struct_add_roster[add_struct_add_roster._merge == 'both'].shape[0]
+    assert add_hh_roster_size == add_hh_roster_matched_size
+
+    # clean up
+    add_struct_add_roster.drop(labels=['_merge'], axis=1, inplace=True)
+
+    # =========================================================
+    # APPEND add_struct_add_roster TO final_hh_roster_hh_units
+    # =========================================================
+    df = final_hh_roster_hh_units.append(add_struct_add_roster)
+    rearranged_cols = ['interview__key', 'interview__id', 'Cluster',
+                       'PROV',
+                       'DIST',
+                       'CONS',
+                       'WARD',
+                       'REGION',
+                       'SEA',
+                       'LOCALITY',
+                       'Address',
+                       'GPSLocation__Latitude',
+                       'GPSLocation__Longitude',
+                       'GPSLocation__Accuracy',
+                       'GPSLocation__Altitude',
+                       'GPSLocation__Timestamp',
+                       'date',
+                       'GeoLocation_Latitude',
+                       'GeoLocation_Longitude',
+                       'GEOLOCATION',
+                       'Structure_Type_Categorisation',
+                       'Specify_Other_Type_Categorisation',
+                       'CBN',
+                       'Multipurpose_Residential_Building',
+                       'Multipurpose_Religious_Building',
+                       'Multipurpose_Institutional_Building',
+                       'Multipurpose_Commercial_Building',
+                       'Residential_Building',
+                       'Specify_Other_Residential',
+                       'Religious_Building',
+                       'Specify_Other_Religious_Structures',
+                       'Institutional_Building',
+                       'Specify_Other_Institutional_Building',
+                       'Educational_Building',
+                       'Commercial_Building',
+                       'Specify_Other_Commercial_Buildings',
+                       'Health_Facility_Hospital_Health_Center',
+                       'Ownership_of_Institution',
+                       'Status_of_the_Institution',
+                       'Structure_Name',
+                       'Structure_Institution_Occupied',
+                       'Add_Structure_Occupied',
+                       'Males_in_structure',
+                       'Females_in_structure',
+                       'Number_of_Housing_Units',
+                       'addtionalstructure',
+                       'ADDITION_NUM',
+                       'interview__status',
+                       'Structure_Category',
+                       'Institutional_Structure_Population',
+                       'Household_Category',
+                       'Males_in_Household',
+                       'Females_in_Household',
+                       'First_Head_Name',
+                       'Add_Head_Name',
+                       'Household_Population',
+                       'Total_Households',
+                       'Housing_Unit_Occupied']
+    df = df[rearranged_cols]
+
+    # =========================================================
+    # SAVE IN OUTPUT DIR
+    # =========================================================
+    date = datetime.strftime(datetime.now(), "%Y-%m-%d")
+    fname = "from_{}_{}.csv".format(from_which_download, date)
+    fpath = output_csv_dir.joinpath(fname)
+    df.to_csv(fpath, index=False)
+
+    return df
+
+
+def process_tab_delimited_add_hh_roster_add_struct_final(dir_with_tab_files, tab_file_names):
+    """
+    Combines the following files comining from Survey Solutions API:
+    - Final.tab
+    - ADDHHROSTER.tab
+    - ADDTIONSTRUCTURES.tab
+    to create a final output which is summarized at Interview__key level.
+    :param dir_with_tab_files: Dir where the tab delimited Survey Solutions files are
+    :return: a dataframe which will later be appended to another dataframe coming from hh_roster and hh_units
+    """
+
+    # ======================================================
+    # PREP THE DATA TAB FILES FOR MERGING
+    # ======================================================
+    final, hh_roster, hh_units, add_hh_roster, add_struct = prepare_tab_files_for_joining(dir_with_tab_files,
+                                                                                          tab_file_names=tab_file_names)
+
+    # ======================================================
+    # MERGE ADDHHROSTER WITH ADDSTRUCTURE
+    # ======================================================
+    addhhroster_addhhstruct = join_two_tab_files(left_df=add_hh_roster, right_df=add_struct,
+                                                 merge_cols=['interview__key', 'ADDTIONSTRUCTURES__id'])
+
+    addhhroster_addhhstruct.rename(columns={'interview__key_x': 'interview__key', "_merge": "_merge_1"}, inplace=True)
+
+    # ===============================================================
+    # MERGE PREVIOUS RESULT (addhhroster_addhhstruct) TO FINAL.TAB
+    # ==============================================================
+    addhhroster_addhhstruct_final = addhhroster_addhhstruct.merge(right=final, on='interview__key', how="left",
+                                                                  indicator=True)
+
+    # rename and drop some columns
+    addhhroster_addhhstruct_final.drop(
+        labels=['interview__id_x', 'interview__id_y', 'merge_id', '_merge_1', "_merge", 'ADDTIONSTRUCTURES__id_x',
+                'interview__key_y'],
+        axis=1, inplace=True)
+
+    addhhroster_addhhstruct_final.rename(columns={'ADDTIONSTRUCTURES__id_y': 'ADDTIONSTRUCTURES__id'}, inplace=True)
+
+    # ======================================================
+    # SUMMARIZE BY INTERVIEW KEY
+    # ======================================================
+    # agg functions hhroster_hhunits_final.
+    agg_func_first = ['interview__id', 'PROV', 'DIST', 'CONS', 'WARD',
+                      'REGION', 'SEA', 'LOCALITY', 'Religious_Building', 'Specify_Other_Religious_Structures',
+                      'Institutional_Building', 'Specify_Other_Institutional_Building',
+                      'Educational_Building', 'Commercial_Building', 'Specify_Other_Commercial_Buildings',
+                      'Health_Facility_Hospital_Health_Center', 'Ownership_of_Institution',
+                      'Status_of_the_Institution', 'CBN', 'GPSLocation__Timestamp', "Structure_Type_Categorisation",
+                      'Specify_Other_Type_Categorisation', 'Educational_Building', 'Commercial_Building',
+                      'Specify_Other_Commercial_Buildings', 'Health_Facility_Hospital_Health_Center',
+                      'Ownership_of_Institution', 'addtionalstructure', 'Add_Head_Name',
+                      'Multipurpose_Commercial_Building', "date",
+                      'Multipurpose_Institutional_Building',
+                      'Multipurpose_Religious_Building',
+                      'Multipurpose_Residential_Building', 'GEOLOCATION',
+                      'Residential_Building',
+                      'Specify_Other_Commercial_Buildings',
+                      'Specify_Other_Religious_Structures',
+                      'Specify_Other_Residential',
+                      'Specify_Other_Type_Categorisation',
+                      'Structure_Institution_Occupied',
+                      'Structure_Name',
+                      'Structure_Type_Categorisation', 'interview__status'
+                      ]
+
+    agg_func_mean = ['GPSLocation__Latitude', 'GPSLocation__Longitude', 'GeoLocation_Latitude',
+                     'GPSLocation__Accuracy', 'GPSLocation__Altitude', 'GeoLocation_Longitude']
+
+    agg_func_sum = ['Males_in_Add_Household', 'Females_in_Add_Household', 'Males_in_structure',
+                    'Females_in_structure', 'Total_Add_Households']
+    # summarize by interview key
+    addhhroster_addhhstruct_final_ik = summarize_by_interview_key(df=addhhroster_addhhstruct_final,
+                                                                  agg_func_first=agg_func_first,
+                                                                  agg_func_mean=agg_func_mean,
+                                                                  agg_func_sum=agg_func_sum,
+                                                                  agg_col='interview__key')
+    # rename above dataframe for convinience, ik stands for Interview__Key
+    addhhr_addstruct_final_ik = addhhroster_addhhstruct_final_ik
+
+    # add Hoousehold_Population Column
+    addhhr_addstruct_final_ik['Household_Population'] = addhhr_addstruct_final_ik['Males_in_Add_Household'] + \
+                                                        addhhr_addstruct_final_ik['Females_in_Add_Household']
+    addhhr_addstruct_final_ik['Institutional_Structure_Population'] = addhhr_addstruct_final_ik['Males_in_structure'] + \
+                                                                      addhhr_addstruct_final_ik['Females_in_structure']
+
+    return addhhr_addstruct_final_ik
+
+
+def process_tab_files_tmp(input_dir, tab_file_names_dict, ref_spss_csv=None, output_csv=None):
+    """
+    Processes all relevant tab delimited files to create an output CSV
+    """
+    # =======================================================
+    # CREATE A MERGED FILE SUMMARIZED AT INTERVIEW_KEY_LEVEL
+    # =======================================================
+    hhroster_hhunits_final_ik = process_tab_files_hh_roster_hh_units_final(dir_with_tab_files=input_dir,
+                                                                           tab_file_names=tab_file_names_dict)
+    add_hh_roster_add_struct_final_ik = process_tab_delimited_add_hh_roster_add_struct_final(
+        dir_with_tab_files=input_dir, tab_file_names=tab_file_names_dict)
+
+    # =======================================================
+    # FOR ADD HH_ROSTER AND ADD_STRUCT OUTPUT, CHANGE COLNAMES
+    # TO PREPARE FOR APPENDING
+    # =======================================================
+    add_hh_roster_add_struct_final_ik.rename(columns={"Total_Add_Households": 'Total_Households',
+                                                      'Males_in_Add_Household': 'Males_in_Household',
+                                                      'Females_in_Add_Household': 'Females_in_Household'},
+                                             inplace=True)
+    # add this column to separate regular households from additional households as
+    # some interview__key have additional households with different locations while most of the
+    # additional households have their own interview_key(ik).
+    add_hh_roster_add_struct_final_ik['Household_Category'] = "ADD"
+    hhroster_hhunits_final_ik['Household_Category'] = "REG"
+
+    # =======================================================
+    # APPEND
+    # =======================================================
+    df = hhroster_hhunits_final_ik.append(add_hh_roster_add_struct_final_ik)
+
+    # =======================================================
+    # REARRANGE COLUMNS
+    # =======================================================
+    ref_cols = ['interview__key', 'interview__id', 'PROV', 'DIST', 'CONS', 'WARD',
+                'REGION', 'SEA', 'LOCALITY', 'GPSLocation__Latitude',
+                'GPSLocation__Longitude', 'GPSLocation__Accuracy',
+                'GPSLocation__Altitude', 'GPSLocation__Timestamp', 'GEOLOCATION',
+                'Structure_Type_Categorisation', 'Specify_Other_Type_Categorisation',
+                'CBN', 'Multipurpose_Residential_Building',
+                'Multipurpose_Religious_Building',
+                'Multipurpose_Institutional_Building',
+                'Multipurpose_Commercial_Building', 'Residential_Building',
+                'Specify_Other_Residential', 'Religious_Building',
+                'Specify_Other_Religious_Structures', 'Institutional_Building',
+                'Specify_Other_Institutional_Building', 'Educational_Building',
+                'Commercial_Building', 'Specify_Other_Commercial_Buildings',
+                'Health_Facility_Hospital_Health_Center', 'Ownership_of_Institution',
+                'Status_of_the_Institution', 'Structure_Name', 'Household_Category',
+                'Structure_Institution_Occupied', 'Males_in_structure',
+                'Females_in_structure', 'Number_of_Housing_Units',
+                'interview__status', 'Total_Households', 'First_Head_Name',
+                'Males_in_Household', 'Females_in_Household', 'Household_Population',
+                'GeoLocation_Latitude', 'GeoLocation_Longitude', 'date']
+    df = df[ref_cols]
+    # ===========================================================
+    # COMPARE WITH OUTPUT FROM SPSS BASED OUTPUT FOR SANITY CHECK
+    # ============================================================
+
+    return df
 
 
 def create_df_without_pandas(file):
@@ -331,7 +866,7 @@ def append_all_building_attributes_to_ea(ea_shp_file, building_footprints,
     # =========================================
     poi_func = {'StructCntPOIs': 'sum'}  # aggregate total populationn and struct count
     ea_pois = append_building_attributes_to_ea(ea_shp=ea, points_shp=poi, agg_id=ea_aggregation_id,
-                                               aggreg_func=poi_func,crs=crs_info,
+                                               aggreg_func=poi_func, crs=crs_info,
                                                add_struct_cnt_col=True,
                                                struct_cnt_col_name='StructCntPOIs')
 
@@ -345,7 +880,7 @@ def append_all_building_attributes_to_ea(ea_shp_file, building_footprints,
     bld_func = {'n_HH': 'sum'}  # aggregate total populationn and struct count
 
     ea_bld = append_building_attributes_to_ea(ea_shp=ea, points_shp=bldings,
-                                              agg_id=ea_aggregation_id,crs=crs_info,
+                                              agg_id=ea_aggregation_id, crs=crs_info,
                                               aggreg_func=bld_func, struct_cnt_col_name=None,
                                               add_struct_cnt_col=False)
     ea_bld.rename(columns={'n_HH': 'StructCntBlds'}, inplace=True)
