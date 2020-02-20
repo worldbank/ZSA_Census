@@ -8,6 +8,5 @@ setup(
     license='',
     author='dmatekenya',
     author_email='dmatekenya@worldbankgroup.org',
-    description='Custom package for processing census household listing data',
-    install_requires=['pandas', 'geopandas', 'numpy']
+    description='Custom package for processing census household listing data'
 )
