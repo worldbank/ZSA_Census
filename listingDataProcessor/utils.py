@@ -25,6 +25,128 @@ def create_df(file):
             continue
 
 
+def fix_coordinates(row, col_to_fix=None):
+    """
+    Fixes coordinates to ensure all
+    records have coordinates.
+    """
+    geo_loc_lon = row["GeoLocation_Longitude"]
+    geo_loc_lat = row["GeoLocation_Latitude"]
+
+    gps_lon = row["GPSLocation__Longitude"]
+    gps_lat = row["GPSLocation__Latitude"]
+
+    try:
+        if "Latitude" in col_to_fix:
+            if str(gps_lat) == str(np.nan):
+                return geo_loc_lat
+            else:
+                return row[col_to_fix]
+        elif "Longitude" in col_to_fix:
+            if str(gps_lon) == str(np.nan):
+                return geo_loc_lon
+            else:
+                return row[col_to_fix]
+    except Exception as e:
+        return np.nan
+
+
+def label_households(row):
+    """
+    Select households by using the following columns.
+    The columns are shamelessly hardcoded
+    """
+    # =====================================
+    # First check the following columns
+    # =====================================
+    if row["Multipurpose_Residential_Building"] == 1.0:
+        return 1
+    elif row["Structure_Type_Categorisation"] == 1.0:
+        return 1
+    elif row['Structure_Institution_Occupied'] == 1.0:
+        return 1
+    elif row["Add_Structure_Occupied"] == 1.0:
+        return 1
+    elif row['Total_Households'] > 0 or row['Household_Population'] > 0:
+        return 1
+    else:
+        return 0
+
+
+def label_pois(row):
+    """
+    Label a structure as POI based on the following.
+    Note that we leave out Nulll values
+    """
+    if row['Structure_Type_Categorisation'] > 1:
+        return 1
+    elif row["Institutional_Building"] >= 1:
+        return 1
+    elif row["Religious_Building"] >=1:
+        return 1
+    elif row["Educational_Building"] >= 1:
+        return 1
+    elif row['Commercial_Building'] >= 1:
+        return 1
+    elif row['Health_Facility_Hospital_Health_Center']>= 1:
+        return 1
+    elif row['Multipurpose_Religious_Building'] == 1.0:
+        return 1
+    elif row['Multipurpose_Institutional_Building'] == 1.0:
+        return 1
+    elif row['Multipurpose_Commercial_Building'] == 1.0:
+        return 1
+    else:
+        return 0
+
+
+def extract_structures_with_households(survey_solutions_python_processed_csv,
+                                       cols_to_keep_hh, cols_to_keep_pois, out_csv_dir):
+    """
+    Processes and spits out a dataframe with households.
+    """
+    # ===========================
+    # Read the data
+    # ===========================
+    df_csv = pd.read_csv(survey_solutions_python_processed_csv)
+
+    # =============================
+    # Fix coordinates
+    # Drop any records without coords
+    # =============================
+    df_csv["GPSLocation__Longitude"] = df_csv.apply(fix_coordinates, args=("GPSLocation__Longitude",), axis=1)
+    df_csv["GPSLocation__Latitude"] = df_csv.apply(fix_coordinates, args=("GPSLocation__Latitude",), axis=1)
+
+    num_rows_before = df_csv.shape[0]
+    df_csv.dropna(subset=["GPSLocation__Longitude", "GPSLocation__Latitude"], inplace=True)
+    num_rows_after = df_csv.shape[0]
+
+    print("Number of records dropped due to missing cordinates: {}".format(num_rows_before - num_rows_after))
+
+    # ================================
+    # Add column to determine whether its
+    # a HH or POI and subset HH only
+    # ================================
+    df_csv["Is_Household"] = df_csv.apply(label_households, axis=1)
+    df_hh = df_csv[df_csv.Is_Household == 1]
+    df_csv["Is_POI"] = df_csv.apply(label_pois, axis=1)
+    df_pois = df_csv[df_csv.Is_POI == 1]
+
+    # ================================
+    # Keep only required columns
+    # ================================
+    df_hh = df_hh[cols_to_keep_hh]
+    df_pois = df_pois[cols_to_keep_pois]
+
+    # ================================
+    # Save to disk
+    # ================================
+    hh_file = out_csv_dir.joinpath("HH.csv")
+    poi_file = out_csv_dir.joinpath("POI.csv")
+    df_hh.to_csv(hh_file, index=False)
+    df_pois.to_csv(poi_file, index=False)
+
+
 def join_two_tab_files(left_df, right_df, merge_cols):
     """
     Helper function for joining two files
