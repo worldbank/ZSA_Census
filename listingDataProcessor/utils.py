@@ -6,6 +6,49 @@ import pandas as pd
 import geopandas as gpd
 import numpy as np
 from datetime import datetime
+import zipfile
+
+
+def identify_latest_zip_files(input_dir):
+    """
+    Retrieves the latest zip file(s)
+    """
+    zip_files = {}
+    zip_cpblt = {}
+    for f in input_dir.iterdir():
+        if "zip" in f.suffix:
+            parts_file = f.parts
+            fdate = parts_file[-1][-14:-4]
+            if "CopperBelt" in str(f):
+                file_date = datetime.strptime(fdate,"%Y-%m-%d")
+                zip_cpblt[file_date] = f
+            else:
+                file_date = datetime.strptime(fdate,"%Y-%m-%d")
+                zip_files[file_date] = f
+
+    ## Sort the items to get latest date
+    out = []
+    if zip_files:
+        zip_files2 = dict(sorted(zip_files.items(), reverse=True))
+        latest_date_all = list(zip_files2.keys())[0]
+        out.append(zip_files2[latest_date_all])
+
+    if zip_cpblt:
+        zip_cpblt2 = dict(sorted(zip_cpblt.items(),reverse=True))
+        latest_date_cpblt = list(zip_cpblt2.keys())[0]
+        out.append(zip_cpblt2[latest_date_cpblt])
+
+
+
+    ## return latest files
+    return out
+
+
+def extract_file(path_to_zip_file):
+    directory_to_extract_to = path_to_zip_file.parents[0]
+
+    with zipfile.ZipFile(path_to_zip_file, 'r') as zip_ref:
+        zip_ref.extractall(directory_to_extract_to)
 
 
 def create_df(file):
@@ -23,6 +66,26 @@ def create_df(file):
             return df
         except Exception as e:
             continue
+
+
+def shpfile_from_csv(csv_file, crs, output_shp, project, save_shp):
+    """
+    Given a CSV file, simply creates a shapefile
+    """
+
+    df = pd.read_csv(csv_file)
+    gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[LON], df[LAT]))
+
+    # manage projections
+    gdf.crs = {'init': 'epsg:4326'}  # first set it to WGS84
+    if project:
+        gdf = gdf.to_crs(crs)  # project to UTM Zone 36
+
+    # save the shp file
+    if save_shp:
+        gdf.to_file(output_shp)
+    else:
+        return gdf
 
 
 def fix_coordinates(row, col_to_fix=None):
@@ -739,21 +802,6 @@ def convert_to_float(row, col_to_fix, replace_col):
         return float(row[col_to_fix])
     except Exception as e:
         return row[replace_col]
-
-
-def fix_coordinates(df, cols):
-    """
-    For coordinate column which require fixing, we it here
-    """
-    to_fix_or_not_cols = check_if_coordinates_colums_need_fixing(df=df,
-                                                                 cols=cols)
-    if to_fix_or_not_cols:
-        fix_col = to_fix_or_not_cols["col_to_fix"]
-        replace_col = to_fix_or_not_cols["replace_col"]
-        df[fix_col] = df.apply(convert_to_float, args=(fix_col, replace_col), axis=1)
-        df[fix_col] = pd.to_numeric(df[fix_col])
-
-    return df
 
 
 def sanitize_and_separate_df_pois(df, struct_type_col, null_feat_cat_replacement,
