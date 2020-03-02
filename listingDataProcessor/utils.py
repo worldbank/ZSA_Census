@@ -202,7 +202,7 @@ def label_pois(row):
 
 
 def extract_structures_with_households(survey_solutions_python_processed_csv,
-                                       cols_to_keep_hh, cols_to_keep_pois, out_csv_dir):
+                                       cols_to_keep_hh, cols_to_keep_pois, out_hh_file, out_poi_file):
     """
     Processes and spits out a dataframe with households.
     """
@@ -242,10 +242,8 @@ def extract_structures_with_households(survey_solutions_python_processed_csv,
     # ================================
     # Save to disk
     # ================================
-    hh_file = out_csv_dir.joinpath("HH.csv")
-    poi_file = out_csv_dir.joinpath("POI.csv")
-    df_hh.to_csv(hh_file, index=False)
-    df_pois.to_csv(poi_file, index=False)
+    df_hh.to_csv(out_hh_file, index=False)
+    df_pois.to_csv(out_poi_file, index=False)
 
 
 def join_two_tab_files(left_df, right_df, merge_cols):

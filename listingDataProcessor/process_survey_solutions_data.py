@@ -82,6 +82,9 @@ def main():
     dir_to_process_cpblt = latest_folders["cpblt"]
 
     # process tabs
+    print("=====================================================================")
+    print("CREATING TOP LEVEL CSV FILES")
+    print("=====================================================================")
     res = create_top_level_csv_file(tab_files_dir_cpblt=dir_to_process_cpblt,
                                     tab_files_dir_all_prov=dir_to_process_all_provs, output_csv_dir=OUTPUT_DIR)
 
@@ -112,16 +115,28 @@ def main():
                         'Status_of_the_Institution', 'Structure_Name']
 
     # run the function for Copperbelt
-    csv_file_cpblt = OUTPUT_DIR.joinpath(res["csv_cpblt"])
+    print("=====================================================================")
+    print("SPLITTING INTO HH AND POIS: ALL")
+    print("=====================================================================")
+    csv_file_cpblt = OUTPUT_DIR.joinpath(res["csv_all"])
+    bas_file = res["csv_all"][:-4]
+    outcsv_hh = OUTPUT_DIR.joinpath(bas_file + "_" + "HH.csv")
+    outcsv_poi = OUTPUT_DIR.joinpath(bas_file + "_" + "POI.csv")
     ut.extract_structures_with_households(survey_solutions_python_processed_csv=csv_file_cpblt,
                                           cols_to_keep_hh=cols_to_keep_hh, cols_to_keep_pois=cols_to_keep_POI,
-                                          out_csv_dir=OUTPUT_DIR)
+                                          out_hh_file=outcsv_hh, out_poi_file=outcsv_poi)
 
     # run the function for Copperbelt
-    csv_file_all = OUTPUT_DIR.joinpath(res["csv_all"])
+    print("=====================================================================")
+    print("SPLITTING INTO HH AND POIS: COPPERBELT")
+    print("=====================================================================")
+    csv_file_all = OUTPUT_DIR.joinpath(res["csv_cpblt"])
+    bas_file = res["csv_cpblt"][:-4]
+    outcsv_hh = OUTPUT_DIR.joinpath(bas_file + "_" + "HH.csv")
+    outcsv_poi = OUTPUT_DIR.joinpath(bas_file + "_" + "POI.csv")
     ut.extract_structures_with_households(survey_solutions_python_processed_csv=csv_file_all,
                                           cols_to_keep_hh=cols_to_keep_hh, cols_to_keep_pois=cols_to_keep_POI,
-                                          out_csv_dir=OUTPUT_DIR)
+                                          out_hh_file=outcsv_hh, out_poi_file=outcsv_poi)
 
 
 if __name__ == '__main__':
