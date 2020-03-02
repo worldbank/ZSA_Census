@@ -5,11 +5,66 @@ import os
 import pandas as pd
 import geopandas as gpd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import zipfile
+import operator
 
 
-def identify_latest_zip_files(input_dir):
+def retrieve_complete_file_downloads(files, look_back_days=5):
+    """
+    Given a dict object with file name and file download date and file
+    size. Return a single file eligible for download
+    """
+    # ===========================================
+    # SORT FILES FROM EARLIEST TO MOST RECENT
+    # ===========================================
+    files2 = dict(sorted(files.items(), reverse=False))
+
+    # ============================================
+    # TODO: what to do if there is only one file
+    # For now, just return that file
+    if len(files2) == 1:
+        return list(files2.values())[0]["fname"]
+
+    # ===========================================
+    # DELETE DOWNLOADS FROM LIST WHICH ARE SMALLER
+    # IN SIZE FROM PREVIOUS ONES
+    # ===========================================
+    max_size = 0
+    keys_to_delete = []
+    for k, v in files2.items():
+        fsize = v["fsize"]
+        if fsize > max_size:
+            max_size = fsize
+        if fsize < max_size:
+            keys_to_delete.append(k)
+    for k in keys_to_delete:
+        del files2[k]
+
+    # ===========================================
+    # INSTEAD OF TAKING THE MOST RECENT DOWNLOAD
+    # TAKE THE BIGGEST DOWNLOAD DURING THE PAST
+    # N DAYS
+    # ===========================================
+    date_today = datetime.now()
+    date_list = [date_today - timedelta(days=x) for x in range(look_back_days)]
+    date_lower, date_upper = date_list[-1], date_list[0]
+
+    # delete older downloads
+    keys = list(files2.keys())
+    for k in keys:
+        if k < date_lower:
+            del files2[k]
+
+    # ===========================================
+    # RETURN THE BIGGEST DOWNLOAD FROM LIST
+    # REPRESENTING MOST COMPLETE DOWNLOAD
+    # ===========================================
+    file_name_size = {v["fname"]: v["fsize"] for k, v in files2.items()}
+    return max(file_name_size.items(), key=operator.itemgetter(1))[0]
+
+
+def get_latest_zip_files_metadata(input_dir):
     """
     Retrieves the latest zip file(s)
     """
@@ -19,33 +74,21 @@ def identify_latest_zip_files(input_dir):
         if "zip" in f.suffix:
             parts_file = f.parts
             fdate = parts_file[-1][-14:-4]
+            fsize = os.path.getsize(str(f)) / 1000000
             if "CopperBelt" in str(f):
-                file_date = datetime.strptime(fdate,"%Y-%m-%d")
-                zip_cpblt[file_date] = f
+                file_date = datetime.strptime(fdate, "%Y-%m-%d")
+                zip_cpblt[file_date] = {"fname": f, "fsize": fsize}
             else:
-                file_date = datetime.strptime(fdate,"%Y-%m-%d")
-                zip_files[file_date] = f
+                file_date = datetime.strptime(fdate, "%Y-%m-%d")
+                zip_files[file_date] = {"fname": f, "fsize": fsize}
 
-    ## Sort the items to get latest date
-    out = []
-    if zip_files:
-        zip_files2 = dict(sorted(zip_files.items(), reverse=True))
-        latest_date_all = list(zip_files2.keys())[0]
-        out.append(zip_files2[latest_date_all])
-
-    if zip_cpblt:
-        zip_cpblt2 = dict(sorted(zip_cpblt.items(),reverse=True))
-        latest_date_cpblt = list(zip_cpblt2.keys())[0]
-        out.append(zip_cpblt2[latest_date_cpblt])
-
-
-
-    ## return latest files
-    return out
+    return zip_files, zip_cpblt
 
 
 def extract_file(path_to_zip_file):
-    directory_to_extract_to = path_to_zip_file.parents[0]
+    base_dir = path_to_zip_file.parents[0]
+    dirname = path_to_zip_file.parts[-1][:-4]
+    directory_to_extract_to = base_dir.joinpath(dirname)
 
     with zipfile.ZipFile(path_to_zip_file, 'r') as zip_ref:
         zip_ref.extractall(directory_to_extract_to)
@@ -68,18 +111,13 @@ def create_df(file):
             continue
 
 
-def shpfile_from_csv(csv_file, crs, output_shp, project, save_shp):
+def shpfile_from_csv(csv_file, output_shp, save_shp, lon, lat):
     """
     Given a CSV file, simply creates a shapefile
     """
 
     df = pd.read_csv(csv_file)
-    gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[LON], df[LAT]))
-
-    # manage projections
-    gdf.crs = {'init': 'epsg:4326'}  # first set it to WGS84
-    if project:
-        gdf = gdf.to_crs(crs)  # project to UTM Zone 36
+    gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df[lon], df[lat]))
 
     # save the shp file
     if save_shp:
@@ -590,7 +628,7 @@ def process_tab_files(dir_with_tab_files, tab_file_names, output_csv_dir,
     fpath = output_csv_dir.joinpath(fname)
     df.to_csv(fpath, index=False)
 
-    return df
+    return fname
 
 
 def process_tab_delimited_add_hh_roster_add_struct_final(dir_with_tab_files, tab_file_names):
