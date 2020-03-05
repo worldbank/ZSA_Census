@@ -4,14 +4,18 @@ Processes raw Survey Solutions data to create two main CSV files
 2. HH.csv
 The process creates intermediate files.
 """
-
+import pandas as pd
 from ListingDataProcessor import utils as ut
+from pathlib import Path
 
 # ==========================================
 # SET UP WORKING DIRECTORIES
 # ==========================================
-INPUT_DIR_WITH_ZIP_FILES = None  # should name like "FromSurveySolutionsRaw"
-OUTPUT_DIR = None  # should have name like "FromSurveySolutionsPythonProcessed"
+# should name like "FromSurveySolutionsRaw"
+INPUT_DIR_WITH_ZIP_FILES = Path("/Users/dmatekenya/Google-Drive/WBG/Zambia/data/FromSurveySolutionsRaw")
+
+# should have name like "FromSurveySolutionsPythonProcessed"
+OUTPUT_DIR = Path("/Users/dmatekenya/Google-Drive/WBG/Zambia/data/FromSurveySolutionsPythonProcessed")
 
 
 def grab_folders_to_process(inputdir):
@@ -47,13 +51,17 @@ def create_top_level_csv_file(tab_files_dir_cpblt, tab_files_dir_all_prov, outpu
     # ===================================
     # RUN FOR COPPERBELT
     # ===================================
-    cpblt_tab_file_names = {'final': 'Copperbelt_Data.tab', "hh_units": 'HOUSINGUNITS.tab',
-                            'hh_roster': 'HHROSTER.tab', 'add_roster': 'ADDHHROSTER.tab',
-                            'add_struct': 'ADDTIONSTRUCTURES.tab'}
-    csv_filename_cpblt = ut.process_tab_files(tab_file_names=cpblt_tab_file_names,
-                                              output_csv_dir=output_csv_dir,
-                                              dir_with_tab_files=tab_files_dir_cpblt,
-                                              from_which_download="Copperbelt")
+    csv_filename_cpblt = None
+    try:
+        cpblt_tab_file_names = {'final': 'Copperbelt_Data.tab', "hh_units": 'HOUSINGUNITS.tab',
+                                'hh_roster': 'HHROSTER.tab', 'add_roster': 'ADDHHROSTER.tab',
+                                'add_struct': 'ADDTIONSTRUCTURES.tab'}
+        csv_filename_cpblt = ut.process_tab_files(tab_file_names=cpblt_tab_file_names,
+                                                  output_csv_dir=output_csv_dir,
+                                                  dir_with_tab_files=tab_files_dir_cpblt,
+                                                  from_which_download="Copperbelt")
+    except Exception as e:
+        pass
 
     # ===================================
     # RUN FOR REST OF PROVINCES
@@ -67,26 +75,39 @@ def create_top_level_csv_file(tab_files_dir_cpblt, tab_files_dir_all_prov, outpu
                                             from_which_download="RestOfProvinces")
 
     # ===================================
-    # RETURN LATEST CSV FILENAMES
+    # COMBINE THE TWO CSVS
     # ===================================
+    df_all = pd.read_csv(csv_filename_all)
+    if csv_filename_cpblt:
+        df_cpblt = pd.read_csv(csv_filename_cpblt)
+        df = pd.concat([df_cpblt, df_all])
+    else:
+        df = df_all
+    # save to file
+    filename = "AllProvinces_{}".format(csv_filename_all[-14:-4])
+    fpath = output_csv_dir.joinpath(filename)
+    df.to_csv(fpath, index=False)
     return {"csv_cpblt": csv_filename_cpblt, "csv_all": csv_filename_all}
 
 
 def main():
-    # ========================================
-    # PROCESS TAB FILES TO CREATE FIRST CSV
-    # ========================================
+    # ============================================
+    # PROCESS TAB FILES TO CREATE FIRST LEVEL CSV
+    # ===========================================
     # get folders to process
-    latest_folders = grab_folders_to_process(inputdir=INPUT_DIR_WITH_ZIP_FILES)
-    dir_to_process_all_provs = latest_folders["all_provs"]
-    dir_to_process_cpblt = latest_folders["cpblt"]
+    # latest_folders = grab_folders_to_process(inputdir=INPUT_DIR_WITH_ZIP_FILES)
+    dir_to_process_all_provs = INPUT_DIR_WITH_ZIP_FILES.joinpath("SuSo_downloaded_Census2020-02-27")
+    # dir_to_process_all_provs = latest_folders["all_provs"]
+    # dir_to_process_cpblt = latest_folders["cpblt"]
 
     # process tabs
     print("=====================================================================")
     print("CREATING TOP LEVEL CSV FILES")
     print("=====================================================================")
-    res = create_top_level_csv_file(tab_files_dir_cpblt=dir_to_process_cpblt,
+    res = create_top_level_csv_file(tab_files_dir_cpblt=None,
                                     tab_files_dir_all_prov=dir_to_process_all_provs, output_csv_dir=OUTPUT_DIR)
+
+
 
     # ========================================
     # PROCESS TO SPLIT BETWEEN HHS AND POIS
@@ -114,7 +135,7 @@ def main():
                         'Health_Facility_Hospital_Health_Center', 'Ownership_of_Institution',
                         'Status_of_the_Institution', 'Structure_Name']
 
-    # run the function for Copperbelt
+    # run the function for f
     print("=====================================================================")
     print("SPLITTING INTO HH AND POIS: ALL")
     print("=====================================================================")

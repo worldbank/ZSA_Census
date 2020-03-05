@@ -228,12 +228,12 @@ def main():
     # PREPARE INPUT PATH (RAW CSVS) AND OUTPUT PATH (EA_DEMARCATION)
     # ====================================================================
     # please edit the path accordingly
-    working_dir = Path.cwd().parents[1]
+    working_dir = Path.cwd().parents[2]
     raw_csv_dir = working_dir.joinpath("data", "lusakaProvince", "listingRawFiles")
-    csv_filename = raw_csv_dir.joinpath("Lusaka_District.csv")
+    csv_filename = raw_csv_dir.joinpath("Chongwe_District.csv")
     ea_demarcation_dir = working_dir.joinpath("data", "DEMARCATION_DATA")
     prov = "LUSAKA"
-    dist = "LUSAKA"
+    dist = "CHONGWE"
 
     # ====================================================================
     # CREATE DATA PROCESSOR OBJECT AND RUN JOB

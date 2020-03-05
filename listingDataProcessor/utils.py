@@ -945,15 +945,45 @@ def split_csv_into_wards(csv_file, ward_id_col, output_folder, suffix):
         dfw.to_csv(output_csv, index=False)
 
 
-def shpfile_from_csv(csv_file, crs, output_shp, project, lon, lat):
+def extract_points_within_geographic_region(polygon_shp, output_prov_shp, preferred_crs=None, csv_file=None, lon=None,
+                                            lat=None, points_shp=None, ):
+    """
+    Extracts only points which falls within the province in question
+    """
+    # =====================================================
+    # Check and fix projection to ensure they are the same
+    # =====================================================
+    if csv_file:
+        points_shp = shpfile_from_csv(csv_file=csv_file, lon=lon, lat=lat)
+    ea_shp = gpd.read_file(polygon_shp)
+    if points_shp.crs == ea_shp.crs:
+        # Perfom spatial join
+        ea_pts = gpd.sjoin(points_shp, ea_shp, how="inner", op="within")
+
+        # Save new SHP file
+        ea_pts.to_file(output_prov_shp)
+    else:
+        shapes = {"points": points_shp, "ea": ea_shp}
+        for k, s in shapes.items():
+            crs = s.crs
+            if crs != preferred_crs:
+                s = s.to_crs(preferred_crs)
+                shapes[k] = s
+
+        # update shp files after fixing CRS
+        ea_shp = shapes["ea"]
+        points_shp = shapes["points"]
+
+        # Perfom spatial join
+        ea_pts = gpd.sjoin(points_shp, ea_shp, how="inner", op="within")
+
+        # Save new SHP file
+        ea_pts.to_file(output_prov_shp)
+
+
+def shpfile_from_csv(csv_file, lat, lon, output_shp=None, save_shp=False):
     """
     Given a CSV file, simply creates a shapefile
-    :param csv_file: the CSV file to use
-    :param crs: Coordinate Reference System (CRS) to use
-    :param output_shp: Full path of output shapefile created
-    :param lon, lat: longitude and latitude column in CSV
-    :param project: whether to project or not
-    :return: saves SHP typically ward level shapefile
     """
 
     df = pd.read_csv(csv_file)
@@ -961,11 +991,12 @@ def shpfile_from_csv(csv_file, crs, output_shp, project, lon, lat):
 
     # manage projections
     gdf.crs = {'init': 'epsg:4326'}  # first set it to WGS84
-    if project:
-        gdf = gdf.to_crs(crs)  # project to UTM Zone 36
 
     # save the shp file
-    gdf.to_file(output_shp)
+    if save_shp:
+        gdf.to_file(output_shp)
+    else:
+        return gdf
 
 
 def create_shp_for_each_ward(dir_with_ward_subdirs, crs, lon_col, lat_col):
@@ -995,33 +1026,26 @@ def create_shp_for_each_ward(dir_with_ward_subdirs, crs, lon_col, lat_col):
 
 
 def append_building_attributes_to_ea(ea_shp, points_shp, agg_id, aggreg_func,
-                                     add_struct_cnt_col, struct_cnt_col_name, crs):
+                                     add_struct_cnt_col, struct_cnt_col_name, preferred_crs):
     """
-    Add columns with population count (from HH listing), building count from HH listing (DF and POI) and
-     from satellite imagery building footprints to each EA for coverage
+    Add columns with population count, building count to each EA for coverage
     check
-    :param ea_shp: ward level EA shapefile to append attributes to
-    :param points_shp: either DF, POIs or building footprints
-    :param agg_id: EA col to use when aggregating attributes at EA level
-    :param aggreg_func: Aggregate function (e.g., sum, count)
-    :param add_struct_cnt_col: Helper column to help with aggregating
-    :param struct_cnt_col_name: New column name to be added for structure count
-    :param crs: CRS being used in this processing (WGS84)
-    :return: Returns a dataframe with agg_id and corresponding attribute (e.g., StructCntHHs, HHPop)
     """
     # =====================================================
     # Check and fix projection to ensure they are the same
     # =====================================================
-    shapes = {"points": points_shp, "ea": ea_shp}
-    for k, s in shapes.items():
-        this_crs = s.crs
-        if this_crs != crs:
-            s = s.to_crs(crs)
-            shapes[k] = s
+    if ea_shp.crs != points_shp.crs:
+        shapes = {"points": points_shp, "ea": ea_shp}
+    
+        for k, s in shapes.items():
+            crs = s.crs
+            if crs != preferred_crs:
+                s = s.to_crs(preferred_crs)
+                shapes[k] = s
 
-    # update shp files after fixing CRS
-    ea_shp = shapes["ea"]
-    points_shp = shapes["points"]
+        # update shp files after fixing CRS
+        ea_shp = shapes["ea"]
+        points_shp = shapes["points"]
 
     # =====================================================
     # Add count column for lack of concise solution
@@ -1034,79 +1058,3 @@ def append_building_attributes_to_ea(ea_shp, points_shp, agg_id, aggreg_func,
     df = df_grp.reset_index()
 
     return df
-
-
-def append_all_building_attributes_to_ea(ea_shp_file, building_footprints,
-                                         hhlisting_dwellings, hhlisting_pois,
-                                         ea_aggregation_id, output_ea_shpfile, crs_info):
-    """
-    A helper function which runs the
-    "append_building_attributes_to_ea" function for ward level DF, POI and building footprints shp file
-    :param ea_shp_file: ward level EA
-    :param building_footprints: ward level building footprints point shp file
-    :param hhlisting_dwellings: ward level DF shp file
-    :param hhlisting_pois: ward level POIs shp file
-    :param ea_aggregation_id: EA column for aggregating attributes
-    :param output_ea_shpfile: Full path for updated shapefile after merging all attributes
-    :return: Saves EA shp file to output_ea_shpfile
-    """
-    # =============================
-    # Read shapefiles
-    # =============================
-    hh = gpd.read_file(hhlisting_dwellings)
-    poi = gpd.read_file(hhlisting_pois)
-    bldings = gpd.read_file(building_footprints)
-    ea = gpd.read_file(ea_shp_file)
-
-    # =========================================
-    # Append Dwelling Frames Structure Count
-    # =========================================
-    df_func = {'HHPop': 'sum', 'StructCntHHs': 'sum'}  # aggregate total populationn and struct count
-    ea_hh = append_building_attributes_to_ea(ea_shp=ea, points_shp=hh, agg_id=ea_aggregation_id,
-                                             aggreg_func=df_func,
-                                             add_struct_cnt_col=True, crs=crs_info,
-                                             struct_cnt_col_name='StructCntHHs')
-
-    # =========================================
-    # Append POIs Structure Count
-    # =========================================
-    poi_func = {'StructCntPOIs': 'sum'}  # aggregate total populationn and struct count
-    ea_pois = append_building_attributes_to_ea(ea_shp=ea, points_shp=poi, agg_id=ea_aggregation_id,
-                                               aggreg_func=poi_func, crs=crs_info,
-                                               add_struct_cnt_col=True,
-                                               struct_cnt_col_name='StructCntPOIs')
-
-    # =========================================
-    # Append building footprints Structure Count
-    # =========================================
-    # delete n_HH is its already in the EA.shp
-    ea_cols = list(ea.columns)
-    if 'n_HH' in ea_cols:
-        ea.drop(labels=['n_HH'], axis=1, inplace=True)
-    bld_func = {'n_HH': 'sum'}  # aggregate total populationn and struct count
-
-    ea_bld = append_building_attributes_to_ea(ea_shp=ea, points_shp=bldings,
-                                              agg_id=ea_aggregation_id, crs=crs_info,
-                                              aggreg_func=bld_func, struct_cnt_col_name=None,
-                                              add_struct_cnt_col=False)
-    ea_bld.rename(columns={'n_HH': 'StructCntBlds'}, inplace=True)
-
-    # =========================================
-    # Merge the three
-    # =========================================
-    ea_merged = ea_hh.merge(right=ea_pois, how="inner", on=ea_aggregation_id).merge(right=ea_bld, how='inner',
-                                                                                    on=ea_aggregation_id)
-    # this column gives total number of structures  based on HHListing
-    # for both POIs and residential
-    ea_merged['TotalStruct'] = ea_merged.StructCntHHs + ea_merged.StructCntPOIs
-
-    # =========================================
-    # Merge to EA shapefile and save to disk
-    # =========================================
-    ea_out = ea.merge(right=ea_merged, on=ea_aggregation_id, how='left')
-    ea_out.to_file(output_ea_shpfile)
-
-    # =========================================
-    # Do some checks
-    # =========================================
-    # TODO
