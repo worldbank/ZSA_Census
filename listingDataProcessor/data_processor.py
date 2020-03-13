@@ -3,7 +3,7 @@ This module calls functions from utils to run data processing functions
 """
 from pathlib import Path
 import os
-from ListingDataProcessor import utils as ut
+from ListingDataProcessor import utils_ver1 as ut
 
 
 class DataProcessor:
@@ -91,10 +91,10 @@ class DataProcessor:
         ward_id_col = self.params['ward_id_col']
         ut.split_csv_into_wards(csv_file=output_dwellings, ward_id_col=ward_id_col,
                                 output_folder=self.dir_with_ward_subdirs,
-                                suffix="df")
+                                suffix="HH")
         ut.split_csv_into_wards(csv_file=output_pois, ward_id_col=ward_id_col,
                                 output_folder=self.dir_with_ward_subdirs,
-                                suffix="poi")
+                                suffix="POI")
 
         # ===========================================
         # CREATE SHP FILES
@@ -114,11 +114,10 @@ class DataProcessor:
         :return:
         """
         for w in self.dir_with_ward_subdirs.iterdir():
-            ward_name = w.parts[-1]
             if w.is_dir():
                 try:
-                    df = os.path.abspath(w.joinpath("{}_df.shp".format(ward_name)))
-                    poi = os.path.abspath(w.joinpath("{}_poi.shp".format(ward_name)))
+                    df = os.path.abspath(w.joinpath("HH.shp"))
+                    poi = os.path.abspath(w.joinpath("POI.shp"))
                     buildings_filename = self.params['ward_level_buildings_filename']
                     bld = os.path.abspath(w.joinpath("{}.shp".format(buildings_filename)))
                     ea_filename = self.params['ward_level_ea_filename']
@@ -131,7 +130,8 @@ class DataProcessor:
                                                             ea_aggregation_id=self.params[
                                                                 'ea_aggregation_id'],
                                                             output_ea_shpfile=ea_shp, crs_info=self.params['crs'])
-                except Exception:
+                except Exception as e:
+                    print(e)
                     print("Failed to append attributes to ward shapefile {}".format(w.parts[-1]))
                     continue
 
@@ -194,8 +194,8 @@ def prepare_processing_parameters():
     cols_params = {"cols_df": columns_to_keep_df, "cols_poi": columns_to_keep_poi,
                    "new_names_df": new_col_names_df, "new_names_poi": new_col_names_poi}
     # Filenames
-    ward_level_ea_shp = 'EA'
-    ward_level_buildings_footprints_filename = 'SIMULATED_HH_FAKE'
+    ward_level_ea_shp = 'EA_original_do_not_edit'
+    ward_level_buildings_footprints_filename = 'building_centroids'
     filenames = {'ward_level_buildings_filename': ward_level_buildings_footprints_filename,
                  'ward_level_ea_filename': ward_level_ea_shp}
 
@@ -204,7 +204,7 @@ def prepare_processing_parameters():
     crs = {'init': 'epsg:4326'}
     ward_id_col_in_ea_shp = 'WARD'
     struct_type_col = 'Structure_type_categorisation'
-    ea_agg_col = 'SEA_CODE'
+    ea_agg_col = 'GEOID'
     residential_struct_category_val = 'Residential Building'
     lat = "Latitude"
     lon = "Longitude"
@@ -229,18 +229,20 @@ def main():
     # ====================================================================
     # please edit the path accordingly
     working_dir = Path.cwd().parents[2]
-    raw_csv_dir = working_dir.joinpath("data", "lusakaProvince", "listingRawFiles")
-    csv_filename = raw_csv_dir.joinpath("Chongwe_District.csv")
-    ea_demarcation_dir = working_dir.joinpath("data", "DEMARCATION_DATA")
-    prov = "LUSAKA"
-    dist = "CHONGWE"
+    raw_csv_dir = working_dir.joinpath("data", "lusakaProvince", "listingRawFiles", "Districts")
+    ea_demarcation_dir = working_dir.joinpath("data", "DEMARCATION_DATA_UPDATED")
 
     # ====================================================================
     # CREATE DATA PROCESSOR OBJECT AND RUN JOB
     # ====================================================================
-    dp = DataProcessor(raw_csv_dir=raw_csv_dir, csv_filename=csv_filename, ea_demarcation_dir=ea_demarcation_dir,
+    district_csv_files = [d for d in raw_csv_dir.iterdir() if d.suffix == ".csv"]
+    for csv_file in district_csv_files:
+        prov = "LUSAKA"
+        dist = csv_file.parts[-1][:-4].upper()
+        print("WORKING ON DISTRICT: {}".format(dist))
+        dp = DataProcessor(raw_csv_dir=raw_csv_dir, csv_filename=csv_file, ea_demarcation_dir=ea_demarcation_dir,
                        province=prov, district=dist, params=processing_params)
-    dp.process_data()
+        dp.process_data()
 
 
 if __name__ == '__main__':

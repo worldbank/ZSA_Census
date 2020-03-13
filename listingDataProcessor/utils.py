@@ -8,6 +8,7 @@ import numpy as np
 from datetime import datetime, timedelta
 import zipfile
 import operator
+from fuzzywuzzy import fuzz
 
 
 def retrieve_complete_file_downloads(files, look_back_days=5):
@@ -840,6 +841,29 @@ def convert_to_float(row, col_to_fix, replace_col):
         return row[replace_col]
 
 
+def identify_mismatched_ward(wards_hh_listing, ward_name_in_dir):
+    """
+    For cases where the ward in the HH listing data has no match in ea demarcation folder
+    we attemopt to find its match
+    """
+    fuzzy_scores = {}
+    for w in wards_hh_listing:
+        w2 = w.lower().replace(" ", "")
+        ward_name2 = ward_name_in_dir.lower().replace(" ", "")
+        r = fuzz.ratio(ward_name2, w2)
+        fuzzy_scores[w] = {"score": r, "ward_name": ward_name_in_dir}
+        if ward_name2 in w2:
+            return {"ward_name_hh": w, "ward_name_dir": ward_name_in_dir}
+
+    max_score = 0
+    out = None
+    for k, v in fuzzy_scores.items():
+        if v["score"] > max_score:
+            max_score = v["score"]
+            out = {"ward_name_hh": k, "ward_name_dir": v["ward_name"]}
+
+    return out
+
 def sanitize_and_separate_df_pois(df, struct_type_col, null_feat_cat_replacement,
                                   output_file_dwelling, output_file_pois, cols_to_keep_df,
                                   new_col_names_df, cols_to_keep_poi, new_col_names_poi,
@@ -946,7 +970,7 @@ def split_csv_into_wards(csv_file, ward_id_col, output_folder, suffix):
 
 
 def extract_points_within_geographic_region(polygon_shp, output_prov_shp, preferred_crs=None, csv_file=None, lon=None,
-                                            lat=None, points_shp=None, ):
+                                            lat=None, points_shp=None, text_coding=None):
     """
     Extracts only points which falls within the province in question
     """
@@ -960,8 +984,13 @@ def extract_points_within_geographic_region(polygon_shp, output_prov_shp, prefer
         # Perfom spatial join
         ea_pts = gpd.sjoin(points_shp, ea_shp, how="inner", op="within")
 
-        # Save new SHP file
-        ea_pts.to_file(output_prov_shp)
+        # check if inner join worked
+        if ea_pts.shape[0] == 0:
+            return False
+        else:
+            # Save new SHP file
+            ea_pts.to_file(output_prov_shp, encoding=text_coding)
+            return True
     else:
         shapes = {"points": points_shp, "ea": ea_shp}
         for k, s in shapes.items():
@@ -977,8 +1006,13 @@ def extract_points_within_geographic_region(polygon_shp, output_prov_shp, prefer
         # Perfom spatial join
         ea_pts = gpd.sjoin(points_shp, ea_shp, how="inner", op="within")
 
-        # Save new SHP file
-        ea_pts.to_file(output_prov_shp)
+        # check if inner join worked
+        if ea_pts.shape[0] == 0:
+            return False
+        else:
+            # Save new SHP file
+            ea_pts.to_file(output_prov_shp, encoding=text_coding)
+            return True
 
 
 def shpfile_from_csv(csv_file, lat, lon, output_shp=None, save_shp=False):

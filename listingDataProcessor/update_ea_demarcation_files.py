@@ -11,15 +11,22 @@ from ListingDataProcessor import utils as ut
 from pathlib import Path
 import geopandas as gpd
 import pandas as pd
+from datetime import datetime
 
 # =====================================
 # USEFUL CONSTANTS
-# ===================================
+# =====================================
+DEBUG_MODE = True
 CRS = {'init': 'epsg:4326'}
 LAT = "GPSLocation__Latitude"
 LON = "GPSLocation__Longitude"
 RES_STRUCT_VAL = 'Residential Building'
 AGG_ID = "GEOID"  # id for aggregating household points at EA level
+MIN_POINTS = 20000 # Minimum number of points in a province for it to be processed
+# since processing many provinces takes time
+# change below to process only required provinces
+# setting the variable to ["prov_name"]
+PROVINCES_TO_PROCESS = None
 
 # ==========================================
 # SET UP WORKING DIRECTORIES
@@ -34,13 +41,21 @@ HH_LISTING_INPUT = Path("/Users/dmatekenya/Google-Drive/WBG/Zambia/data/FromSurv
 FRAMES_FILE = DEMARCATION_INPUT_FILES_DIR.joinpath('FinalFrame-24-01-2020.csv')
 
 # directory with ea demarcation files to be updated
-EA_DEMARCATION_DIR = Path("/Users/dmatekenya/Google-Drive/WBG/Zambia/data/DEMARCATION_DATA_UPDATED")
+EA_DEMARCATION_DIR = Path("/Users/dmatekenya/Desktop/TMP/")
 
 # directory to dump intermediate processing files
 INTERMEDIATE_OUTPUTS_DIR = Path("/Users/dmatekenya/Google-Drive/WBG/Zambia/data/HHListingIntermediateOutputs")
 
+# ==========================================
+# FOR DEBUGGING USE TEST FOLDER
+# ==========================================
+if DEBUG_MODE:
+    PROVINCES_TO_PROCESS = ["LUAPULA"]
+    EA_DEMARCATION_DIR = Path("/Users/dmatekenya/Desktop/TMP/")
 
-def pick_province_to_process(csv_frames, csv_hh, min_points_to_process=10000):
+
+
+def pick_province_to_process(csv_frames, csv_hh, min_points_to_process=MIN_POINTS):
     """
     """
     # get latest CSV file
@@ -67,21 +82,12 @@ def pick_province_to_process(csv_frames, csv_hh, min_points_to_process=10000):
     for p in provs:
         for item in prov_name_code:
             if item['Prove_Code'] == p:
-                prov_to_process.append({'Prov_Name': item['Prov_Name'], 'Prove_Code': p})
+                prov_to_process.append(item['Prov_Name'])
 
     return prov_to_process
 
 
 def grab_prov_level_shp_files(input_dir, prov_name, file_type):
-    # grab buildings
-    bld_dir = input_dir.joinpath("BuildingsByProvince")
-    bld_file = None
-    for f in bld_dir.iterdir():
-        if f.suffix == ".shp":
-            prov = f.parts[-1][9:-4]
-            if prov.lower() == prov_name.lower():
-                bld_file = os.path.abspath(f)
-
     # grab EAs
     ea_dir = input_dir.joinpath("EAsByProvince")
     ea_file = None
@@ -167,29 +173,33 @@ def update_ward_demarcation_files(ward_dir, prov_level_poi_shp, prov_level_hh_sh
 
     hh_prov_pts = gpd.read_file(prov_level_hh_shp)
     poi_prov_pts = gpd.read_file(prov_level_poi_shp)
-    ut.extract_points_within_geographic_region(points_shp=hh_prov_pts, polygon_shp=ea, output_prov_shp=out_hh_shp,
+    hh = ut.extract_points_within_geographic_region(points_shp=hh_prov_pts, polygon_shp=ea, output_prov_shp=out_hh_shp,
                                                preferred_crs=CRS)
-    ut.extract_points_within_geographic_region(points_shp=poi_prov_pts, polygon_shp=ea,
+    poi = ut.extract_points_within_geographic_region(points_shp=poi_prov_pts, polygon_shp=ea,
                                                output_prov_shp=out_poi_shp, preferred_crs=CRS)
 
     # ================================================
     # Update EA with building and Households counts
     # ================================================
-    hh_ward_pts = gpd.read_file(out_hh_shp)
-    poi_ward_pts = gpd.read_file(out_poi_shp)
-    ea_hh, ea_bld, ea_pois = append_all_building_attributes_to_ea(ea_shp_file=ea, bldings_file=bld,
-                                                  hhlisting_dwellings=hh_ward_pts,
-                                                  hhlisting_pois=poi_ward_pts,
-                                                  ea_aggregation_id=AGG_ID)
+    if hh and poi:
+        hh_ward_pts = gpd.read_file(out_hh_shp)
+        poi_ward_pts = gpd.read_file(out_poi_shp)
+        ea_hh, ea_bld, ea_pois = append_all_building_attributes_to_ea(ea_shp_file=ea, bldings_file=bld,
+                                                      hhlisting_dwellings=hh_ward_pts,
+                                                      hhlisting_pois=poi_ward_pts,
+                                                      ea_aggregation_id=AGG_ID)
 
-    ea_merged = ea_hh.merge(right=ea_pois, how="inner", on=ea_aggregation_id).merge(right=ea_bld, how='inner',
-                                                                                    on=ea_aggregation_id)
-    df_ea = gpd.read_file(ea)
-    df_ea2 = df_ea.merge(right=ea_merged, on=ea_aggregation_id, how="left")
-    # ================================================
-    # SAVE UPDATED EA SHP FILE
-    # ================================================
-    df_ea2.to_file(ea)
+        ea_merged = ea_hh.merge(right=ea_pois, how="inner", on=ea_aggregation_id).merge(right=ea_bld, how='inner',
+                                                                                        on=ea_aggregation_id)
+        df_ea = gpd.read_file(ea)
+        df_ea2 = df_ea.merge(right=ea_merged, on=ea_aggregation_id, how="left")
+        # ================================================
+        # SAVE UPDATED EA SHP FILE
+        # ================================================
+        df_ea2.to_file(ea)
+    else:
+        #TODO allow processinf of wards without POIs
+        pass
 
 
 def update_province_ea_demarcation_files(ea_demarcation_dir, intermediate_outputs_dir,
@@ -202,10 +212,21 @@ def update_province_ea_demarcation_files(ea_demarcation_dir, intermediate_output
     dirname.mkdir(parents=True, exist_ok=True)
     out_hh_shp = os.path.abspath(dirname.joinpath("{}_HH.shp".format(prov_name)))
     out_poi_shp = os.path.abspath(dirname.joinpath("{}_POI.shp".format(prov_name)))
-    # ut.extract_points_within_geographic_region(csv_file=csv_hh, polygon_shp=prov_level_ea_shp,
-    #                                            output_prov_shp=out_hh_shp, lat=LAT, lon=LON, preferred_crs=CRS)
-    # ut.extract_points_within_geographic_region(csv_file=csv_poi, polygon_shp=prov_level_ea_shp,
-    #                                            output_prov_shp=out_poi_shp, lat=LAT, lon=LON, preferred_crs=CRS)
+
+    print("#"*50)
+    print("Creating HH shapefile")
+    print(out_hh_shp)
+    print("#"*50)
+    ut.extract_points_within_geographic_region(csv_file=csv_hh, polygon_shp=prov_level_ea_shp,
+                                               output_prov_shp=out_hh_shp, lat=LAT, lon=LON, preferred_crs=CRS,
+                                               text_coding="utf-8")
+    print("#"*50)
+    print("Creating POI shapefile")
+    print(out_poi_shp)
+    print("#"*50)
+    ut.extract_points_within_geographic_region(csv_file=csv_poi, polygon_shp=prov_level_ea_shp,
+                                               output_prov_shp=out_poi_shp, lat=LAT, lon=LON,
+                                               preferred_crs=CRS, text_coding="utf-8")
 
     # =====================================
     # PROCESS ALL DISTRICTS AND WARDS
@@ -214,13 +235,41 @@ def update_province_ea_demarcation_files(ea_demarcation_dir, intermediate_output
     districts = [i for i in ea_demarcation_dir.joinpath(prov_name).iterdir() if i.is_dir()]
 
     for d in districts:
+        print("="*50)
+        print("Working on district: {}".format(d))
+        print("="*50)
         try:
             wards = [i for i in d.iterdir() if i.is_dir()]
             for w in wards:
-                update_ward_demarcation_files(ward_dir=w, prov_level_poi_shp=out_poi_shp,
-                                              prov_level_hh_shp=out_hh_shp, ea_aggregation_id=AGG_ID)
+                try:
+                    update_ward_demarcation_files(ward_dir=w, prov_level_poi_shp=out_poi_shp,
+                                                  prov_level_hh_shp=out_hh_shp, ea_aggregation_id=AGG_ID)
+                except Exception as e:
+                    continue
         except Exception as e:
-            pass
+            print(e)
+            continue
+
+
+def get_latest_poi_and_hh_csv(input_dir):
+    hh = {}
+    poi = {}
+    for f in input_dir.iterdir():
+        fname = f.parts[-1]
+        if fname[:2] == "HH":
+            date_str = fname[-14:-4]
+            file_date = datetime.strptime(date_str, "%Y-%m-%d")
+            hh[f] = file_date
+        if  fname[:3] == "POI":
+            date_str = fname[-14:-4]
+            file_date = datetime.strptime(date_str, "%Y-%m-%d")
+            poi[f] = file_date
+    # sort the districts
+    hh_sorted = {k: v for k, v in sorted(hh.items(), key=lambda item: item[1], reverse=True)}
+    poi_sorted = {k: v for k, v in sorted(poi.items(), key=lambda item: item[1], reverse=True)}
+
+    return list(hh_sorted.keys())[0], list(poi_sorted.keys())[0]
+
 
 
 def process_all_provinces():
@@ -233,22 +282,24 @@ def process_all_provinces():
     # GET PROVINCES TO PROCESS
     # ==========================================
     # TODO: pick the latest file in the folder
-    hh_csv = HH_LISTING_INPUT.joinpath("from_RestOfProvinces_2020-03-03_HH.csv")
-    poi_csv = HH_LISTING_INPUT.joinpath("from_RestOfProvinces_2020-03-03_POI.csv")
+    hh_csv, poi_csv = get_latest_poi_and_hh_csv(input_dir=HH_LISTING_INPUT)
+
     provs = pick_province_to_process(csv_frames=FRAMES_FILE, csv_hh=hh_csv, min_points_to_process=10000)
+    if PROVINCES_TO_PROCESS:
+        provs = PROVINCES_TO_PROCESS
 
     # ==========================================
     # PROCESS PROVINCES
     # ==========================================
     for p in provs:
-        province_name = p["Prov_Name"]
-        if province_name != "LUAPULA":
-            continue
+        print("="*50)
+        print("Working on province: {}".format(p))
+        print("="*50)
         prov_level_EAs_shp = grab_prov_level_shp_files(input_dir=DEMARCATION_INPUT_FILES_DIR, file_type="ea",
-                                                       prov_name=province_name)
+                                                       prov_name=p)
         update_province_ea_demarcation_files(ea_demarcation_dir=EA_DEMARCATION_DIR,
                                              intermediate_outputs_dir=INTERMEDIATE_OUTPUTS_DIR,
-                                             prov_name=province_name, csv_hh=hh_csv, csv_poi=poi_csv,
+                                             prov_name=p, csv_hh=hh_csv, csv_poi=poi_csv,
                                              prov_level_ea_shp=prov_level_EAs_shp)
 
 
